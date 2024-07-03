@@ -1,0 +1,33 @@
+vector_field_controller_node:
+  ros__parameters:
+    
+    #node configuration
+    rate: 20.0
+    repulsive_scan_topic: "scan" #the laserscan that will be used to consider repulsive points
+    attractive_point_topic: "clicked_point" #attractive point
+    publish_cmd_topic: "cmd_vel" #on which topic to publish the speed commands
+    publish_command_feedback_topic: "cmd_vel_vector" #publish a pose visualizable on RVIZ
+    keep_alive_topic: "vector_field_controller_alive" #topic to keep the controller running or to stop it
+    keep_alive_timeout: 1.0 #if nothing is received on 'keep_alive_topic' then this delay define how much time to wait befor to stop the controller.
+
+    #vector field configuration 
+    robot_frame: "base_link"
+    map_frame: "map"
+    control_type: "omni" #controller type 'diff' (differential) or 'omni' (omnidirectionnal)
+    k_repulse: 2.0 #repulsivity multiplier
+    k_attract: 1.0 #attractivity multiplier
+    v_min: 0.1 #minimal norm of speed vector
+    v_max: 1.0 #maximal norm of speed vector
+
+    #options
+    publish_field: true
+    publish_field_topic: "vector_field" #on which topic to publish the vector field (pose array)
+    field_grid_reso_x: 30 #how many points to show
+    field_grid_reso_y: 30
+    field_grid_x_elong: 6.0 #size of vector field to print, around robot's pose
+    field_grid_y_elong: 6.0
+    arrows_size_multiplier: 0.1
+
+    #debuggging
+    debug: true
+    debug_file_path: "/home/jrluser/Desktop/test_workspace/src/ros2-vector-field-controller/ros2_vector_field_controller/ros2_vector_field_controller_debug.txt"
