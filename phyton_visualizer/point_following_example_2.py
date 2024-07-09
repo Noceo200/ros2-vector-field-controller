@@ -10,6 +10,10 @@ def f_omni(x,u,v_d):
     v,θ = x[2],x[3] 
     return array([[v*v_d[0]/norm(v_d)],[v*v_d[1]/norm(v_d)],[u[0]],[u[1]]])
 
+"""
+Vector field parameters.
+"""
+
 min_spd_x = -1.0
 min_spd_y = -1.0
 max_spd_x = 1.0
@@ -18,9 +22,10 @@ gap_radius_x = 0.1
 gap_radius_y = 0.1
 null_radius_x = 0.1
 null_radius_y = 0.1
+ka = 1.0 #coeff attractivity
+kr = 0.5 #coeff de repoussement (exponential position)
+
 def vector_field(x,y,q_points, p_points):  #-grad(V) #x1 and x2 can be matrix because of draw_vector_field function
-    ka = 0.0 #coeff attractivity
-    kr = 0.5 #coeff de repoussement (exponential position)
 
     grad_v_x = 0.0
     grad_v_y = 0.0
@@ -41,7 +46,7 @@ def vector_field(x,y,q_points, p_points):  #-grad(V) #x1 and x2 can be matrix be
             grad_v_x += clamp_not_zero(attr_int_x,min_spd_x,max_spd_x,gap_radius_x,null_radius_x)
             grad_v_y += clamp_not_zero(attr_int_y,min_spd_y,max_spd_y,gap_radius_y,null_radius_y)
 
-    #we clamp the final result, otherwise
+    print(grad_v_x)
 
     return grad_v_x+cmd_off[0,0],grad_v_y+cmd_off[1,0]
 
@@ -57,10 +62,9 @@ def clamp_not_zero(val,min_lim,max_lim,gap_radius,null_radius):
             new_val = 0.0
     return new_val
 
-
 #list of repusive points
 q_points = [
-    #array([[-3],[-3]])
+    array([[-3],[-3]])
     ] 
 
 for i in np.arange(-4,5,2):
@@ -87,9 +91,9 @@ for t in arange(0,50,dt):
     mx, my, mv, mθ = x.flatten()
 
     #commandes
-    #p_points[0] = array([[3*cos((t*2)/10)], [3*sin((t*2)/10)]])
+    p_points[0] = array([[3*cos((t*2)/10)], [3*sin((t*2)/10)]])
     vhat = array([[0.0],[0.0]]) #array([[-0.3*2*sin((t*2)/10)],[0.3*2*cos((t*2)/10)]]) #dérivée de phat #array([[0.0],[0.0]])
-    #q_points[0] = array([[cos(-t/10)+p_points[0][0,0]], [sin(-t/10)+p_points[0][1,0]]])
+    q_points[0] = array([[cos(-t/10)+p_points[0][0,0]], [sin(-t/10)+p_points[0][1,0]]])
 
     #teleoperation cmd
     #cmd_off = array([[0.5*cos((t*2)/2)], [0.5*sin((t*2)/2)]])
@@ -98,10 +102,6 @@ for t in arange(0,50,dt):
     wx, wy = vector_field(mx,my,q_points,p_points) #gradient à suivre
     w = array([wx,wy])
     vbar = clamp_not_zero(norm(w),min_spd_y,max_spd_y,gap_radius_y,null_radius_y) #max(min(norm(w),1.0),norm(vhat)*1.1) #vitesse capée dans le vector field direct
-    print("W:")
-    print(norm(w))
-    print("vbar:")
-    print(vbar)
     θbar = angle(w)
     u=array([[vbar-mv],[sawtooth(θbar-mθ)]])
     θbar_omni = sawtooth(angle(p_points[0]-array([[mx],[my]])))
