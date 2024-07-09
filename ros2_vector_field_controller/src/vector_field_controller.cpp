@@ -167,37 +167,29 @@ private:
   }*/
 
   void minus_grad(geometry_msgs::msg::Vector3 &wanted_speed, double pos_x, double pos_y){
-    double coef = k_repulse;
+    double ka = k_attract;
+    double kr = k_repulse;
     double grad_v_x = 0.0;
     double grad_v_y = 0.0;
 
     //repulsive points
     
     for(int i=0; i<repulsive_points.size(); i++){
-      double nq1 = coef*(pos_x-repulsive_points[i].x);
-      double nq2 = coef*(pos_y-repulsive_points[i].y);
-      double norm3 = pow((pow(nq1,2)+pow(nq2,2)),3/2);
-      if(norm3 != 0.0){
-        grad_v_x += -nq1/norm3;
-        grad_v_y += -nq2/norm3;
+      double norm_term = sqrt(pow(pos_x-repulsive_points[i].x,2)+pow(pos_y-repulsive_points[i].y,2));
+      double exp_term = exp(kr-norm_term);
+      if(norm_term > 0.0){
+          grad_v_x += (pos_x-repulsive_points[i].x)*(exp_term/norm_term);
+          grad_v_y += (pos_y-repulsive_points[i].y)*(exp_term/norm_term);
       }
     }
-    
-
-    /*double nq1 = coef*(pos_x);
-    double nq2 = coef*(pos_y+1.0);
-    double norm3 = pow((pow(nq1,2)+pow(nq2,2)),3/2);
-    if(norm3 != 0.0){
-      grad_v_x += -nq1/norm3;
-      grad_v_y += -nq2/norm3;
-    }*/
 
     //attractive point
-    grad_v_x += 2*(pos_x-attractive_point.x);
-    grad_v_y += 2*(pos_y-attractive_point.y);
+    double norm_ka_term = pow(sqrt(pow(pos_x-attractive_point.x,2) + pow(pos_y-attractive_point.y,2)),ka-2);
+    grad_v_x += std::clamp((pos_x-attractive_point.x)*(-ka*norm_ka_term),-1.0,1.0);
+    grad_v_y += std::clamp((pos_y-attractive_point.y)*(-ka*norm_ka_term),-1.0,1.0);
 
-    wanted_speed.x = std::clamp(-grad_v_x,-1.0,1.0);
-    wanted_speed.y = std::clamp(-grad_v_y,-1.0,1.0);
+    wanted_speed.x = std::clamp(grad_v_x,-1.0,1.0);
+    wanted_speed.y = std::clamp(grad_v_y,-1.0,1.0);
   }
 
   int update_tf(std::stringstream &debug_ss){
@@ -403,7 +395,7 @@ private:
   std::string map_frame; //used
   std::string control_type;
   double k_repulse; //used
-  double k_attract;
+  double k_attract; //used
   double v_min;
   double v_max;
   bool publish_field; //used

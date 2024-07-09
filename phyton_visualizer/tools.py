@@ -6,7 +6,10 @@ def draw_field_perso(ax, f, q_points, p_points, xmin, xmax, ymin, ymax, a):
     X1, X2 = meshgrid(Mx, My)
     VX, VY = f(X1, X2, q_points, p_points)
     R = sqrt(VX ** 2 + VY ** 2)
-    quiver(Mx, My, VX / R, VY / R)
+    # Calculate the maximum value of R to use it for scaling
+    max_R = np.max(R)
+    # Use quiver to plot arrows with lengths proportional to R
+    ax.quiver(Mx, My, (0.9*a)*(VX / max_R), (0.9*a)*(VY / max_R))
 
 
 def clamp(x,val1,val2):

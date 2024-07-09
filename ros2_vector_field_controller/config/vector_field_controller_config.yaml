@@ -14,7 +14,7 @@ vector_field_controller_node:
     robot_frame: "base_link"
     map_frame: "map"
     control_type: "omni" #controller type 'diff' (differential) or 'omni' (omnidirectionnal)
-    k_repulse: 2.0 #repulsivity multiplier
+    k_repulse: -4.0 #repulsivity multiplier
     k_attract: 1.0 #attractivity multiplier
     v_min: 0.1 #minimal norm of speed vector
     v_max: 1.0 #maximal norm of speed vector
