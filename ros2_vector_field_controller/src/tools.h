@@ -1,5 +1,5 @@
 /*
-LAST MODIF(DD/MM/YYYY): 17/06/2024
+LAST MODIF(DD/MM/YYYY): 10/07/2024
 */
 
 #include "rclcpp/rclcpp.hpp"
@@ -59,3 +59,4 @@ int filter_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan, st
 void get_pos(double &x, double &y,double alpha,double val,double x_off,double y_off);
 int transform_360_data(sensor_msgs::msg::LaserScan::SharedPtr to_transform_scan, double off_vect_x,double off_vect_y, double off_tetha, std::stringstream &debug_ss);
 void transform_2D_point(double &result_x, double &result_y,double init_x, double init_y, Eigen::MatrixXd &M1_2);
+void rotate2Dvect(geometry_msgs::msg::Vector3 &result, geometry_msgs::msg::Vector3 vect_to_rotate, double rotation_angle);

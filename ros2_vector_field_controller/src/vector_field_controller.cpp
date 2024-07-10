@@ -39,19 +39,20 @@ public:
     auto sensor_qos = rclcpp::QoS(rclcpp::SensorDataQoS());
 
     //subscribers
-    keep_alive_subscriber = this->create_subscription<std_msgs::msg::Bool>(keep_alive_topic, sensor_qos, std::bind(&VectorFieldController::aliveCallback, this, std::placeholders::_1));
-    attractive_point_subscriber = this->create_subscription<geometry_msgs::msg::PointStamped>(attractive_point_topic, sensor_qos, std::bind(&VectorFieldController::attractivePointCallback, this, std::placeholders::_1));
-    repulsive_scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(repulsive_scan_topic, sensor_qos, std::bind(&VectorFieldController::repulsiveScanCallback, this, std::placeholders::_1));
+    keep_alive_subscriber = this->create_subscription<std_msgs::msg::Bool>(input_keep_alive_topic, sensor_qos, std::bind(&VectorFieldController::aliveCallback, this, std::placeholders::_1));
+    attractive_point_subscriber = this->create_subscription<geometry_msgs::msg::PointStamped>(input_attractive_point_topic, sensor_qos, std::bind(&VectorFieldController::attractivePointCallback, this, std::placeholders::_1));
+    repulsive_scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(input_repulsive_scan_topic, sensor_qos, std::bind(&VectorFieldController::repulsiveScanCallback, this, std::placeholders::_1));
+    cmd_subscriber = this->create_subscription<geometry_msgs::msg::Twist>(input_cmd_topic, sensor_qos, std::bind(&VectorFieldController::cmdInputCallback, this, std::placeholders::_1));
     //Clock
     if(use_sim_time){
         clock_subscription_ = this->create_subscription<rosgraph_msgs::msg::Clock>("/clock", sensor_qos, std::bind(&VectorFieldController::ClockCallback, this, std::placeholders::_1));
     }
 
     //publishers
-    cmd_publisher = this->create_publisher<geometry_msgs::msg::Twist>(publish_cmd_topic, 10);
-    cmd_vector_publisher = this->create_publisher<geometry_msgs::msg::TwistStamped>(publish_command_feedback_topic, 10);
+    cmd_publisher = this->create_publisher<geometry_msgs::msg::Twist>(output_cmd_topic, 10);
+    cmd_vector_publisher = this->create_publisher<geometry_msgs::msg::TwistStamped>(output_command_feedback_topic, 10);
     if(publish_field){
-      vector_field_publisher = this->create_publisher<visualization_msgs::msg::MarkerArray>(publish_field_topic, 10);
+      vector_field_publisher = this->create_publisher<visualization_msgs::msg::MarkerArray>(output_field_topic, 10);
     }
 
     //main loop
@@ -66,14 +67,21 @@ private:
   }
 
   void attractivePointCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
+    attractive_point_mutex.lock();
     attractive_point_msg = msg;
-    attractive_point = msg->point; //directly update attractive point
+    attractive_point_mutex.unlock();
   }
 
   void repulsiveScanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
     raw_scan_mutex.lock();
     repulsive_scan_msg = msg;
     raw_scan_mutex.unlock();
+  }
+
+  void cmdInputCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    input_cmd_mutex.lock();
+    input_cmd_msg = msg;
+    input_cmd_mutex.unlock();
   }
 
   void ClockCallback(const rosgraph_msgs::msg::Clock::SharedPtr msg)
@@ -95,20 +103,35 @@ private:
     std::stringstream debug_ss;
 
     debug_ss << "\n\n///COMPUTE FIELD STARTED///" << std::endl;
-
-    if(repulsive_scan_msg != nullptr && attractive_point_msg != nullptr){
-      debug_ss << "Getting robot state and repulsive obstacles from TFs and scan on topic '"<< repulsive_scan_topic <<"'"<<std::endl;
+    
+    if(repulsive_scan_msg != nullptr && (attractive_point_msg != nullptr || input_cmd_msg!=nullptr)){
+      //extract received data, and store it in class variable
+      if(attractive_point_msg != nullptr){
+        attractive_point_mutex.lock();
+        attractive_point = attractive_point_msg->point;
+        attractive_point_mutex.unlock();
+      }
+      if(input_cmd_msg!=nullptr){
+        input_cmd_mutex.lock();
+        input_cmd = *input_cmd_msg;
+        input_cmd_mutex.unlock();
+        check_cmd = true;
+      }
+      debug_ss << "Getting robot state and repulsive obstacles from TFs and scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
       int res = update_tf(debug_ss);
       if(update_2Dpoints_from_scan(vector_map_robot.x,vector_map_robot.y)){
         debug_ss << "Scan successfully transformed to repulsive points (Transformation: `"<< robot_frame << "' to '" << map_frame <<"' got)" << std::endl;
-        geometry_msgs::msg::Vector3 wanted_speed;
+        geometry_msgs::msg::Vector3 wanted_speed_world_frame;
         //compute speed according to robot position
-        debug_ss  << "Atractive point (x,y): (" << attractive_point.x<< " ; " << attractive_point.y<< ")" << std::endl;
-        minus_grad(wanted_speed,vector_map_robot.x,vector_map_robot.y);
+        debug_ss  << "Attractive point (x,y): (" << attractive_point.x<< " ; " << attractive_point.y<< ")" << std::endl;
+        minus_grad(wanted_speed_world_frame,vector_map_robot.x,vector_map_robot.y,check_cmd);
+        //rotate vector from world to robot_frame
+        geometry_msgs::msg::Vector3 wanted_speed_rob_frame;
+        rotate2Dvect(wanted_speed_rob_frame,wanted_speed_world_frame,-vector_map_robot.z);
         //publish commands
-        publish_cmd(wanted_speed.x,wanted_speed.y,0.0);
+        publish_cmd(wanted_speed_rob_frame.x,wanted_speed_rob_frame.y,0.0);
         if(publish_field){
-          publishVectorField();
+          publishVectorField(check_cmd);
         }
       }
       else{
@@ -116,8 +139,8 @@ private:
       }
     }
     else{
-      debug_ss << "waiting to receive scan on topic '"<< repulsive_scan_topic <<"'"<<std::endl;
-      debug_ss << "waiting to receive point on topic '"<< attractive_point_topic <<"'"<<std::endl;
+      debug_ss << "waiting to receive scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
+      debug_ss << "waiting to receive point on topic '"<< input_attractive_point_topic <<"'"<<std::endl;
     }
     
     if(debug){
@@ -146,7 +169,7 @@ private:
       double range = ranges[i];
       if(range != INFINITY){ //we skip infinity points, they are not obstacles
         //get pos of obstacle in the robot frame
-        get_pos(pos_x, pos_y,angle,range,0.0,0.0);
+        get_pos(pos_x, pos_y,angle+vector_map_robot.z,range,0.0,0.0); 
         //convert robot frame pose to map frame with TFs
         new_point->x = pos_x + offset_x; 
         new_point->y = pos_y + offset_y;
@@ -158,38 +181,121 @@ private:
     return 1;
   }
 
-  /*void grad_repulse(){//we compute the repulsive part only once
-    Eigen::MatrixXd P = Eigen::MatrixXd::Identity(2, 1);
-    P(0,0) = off_vect_x;
-    P(1,0) = off_vect_y;
-    
-    return 
-  }*/
+  void minus_grad(geometry_msgs::msg::Vector3 &wanted_speed, double pos_x, double pos_y, bool check_cmd){
+    /*Used class variables:
+      double max_spd_norm
+      double zero_padding_radius
+      double min_spd_norm
+      double min_goal_dist
+      double ka_force 
+      double kr_dist
+      double kr_height
+      attractive_point
+      repulsive_points
+    */
 
-  void minus_grad(geometry_msgs::msg::Vector3 &wanted_speed, double pos_x, double pos_y){
-    double ka = k_attract;
-    double kr = k_repulse;
-    double grad_v_x = 0.0;
-    double grad_v_y = 0.0;
+    //Compute clamped repulsive command
+    geometry_msgs::msg::Vector3 cl_rep_cmd;
+    compute_rep_cmd(cl_rep_cmd,pos_x,pos_y);
 
-    //repulsive points
-    
-    for(int i=0; i<repulsive_points.size(); i++){
-      double norm_term = sqrt(pow(pos_x-repulsive_points[i].x,2)+pow(pos_y-repulsive_points[i].y,2));
-      double exp_term = exp(kr-norm_term);
-      if(norm_term > 0.0){
-          grad_v_x += (pos_x-repulsive_points[i].x)*(exp_term/norm_term);
-          grad_v_y += (pos_y-repulsive_points[i].y)*(exp_term/norm_term);
+    //Compute clamped attractivity command
+    geometry_msgs::msg::Vector3 cl_attr_cmd;
+    bool point_following_mode;
+    point_following_mode = compute_attr_cmd(cl_attr_cmd,pos_x,pos_y,check_cmd);
+
+    //Merge and clamp commands
+    geometry_msgs::msg::Vector3 cmd;
+    cmd.x = cl_rep_cmd.x + cl_attr_cmd.x;
+    cmd.y = cl_rep_cmd.y + cl_attr_cmd.y;
+    cmd.z = cl_attr_cmd.z;
+    double cmd_norm = sqrt(pow(cmd.x,2)+pow(cmd.y,2));
+    double remap_ratio = 0.0;
+    if (cmd_norm>0.0){
+      remap_ratio = clamp_not_zero(cmd_norm,0.0,max_spd_norm,0.0)/cmd_norm;
+    }
+
+    geometry_msgs::msg::Vector3 cl_cmd;
+    cl_cmd.x = cmd.x*remap_ratio;
+    cl_cmd.y = cmd.y*remap_ratio;
+
+    if(point_following_mode){
+      double pa_dist = sqrt(pow(pos_x-attractive_point.x,2)+pow(pos_y-attractive_point.y,2)); //distance between current position and attractive point
+      if(pa_dist <= min_goal_dist){
+        cl_cmd.x = 0.0;
+        cl_cmd.y = 0.0;
       }
     }
 
-    //attractive point
-    double norm_ka_term = pow(sqrt(pow(pos_x-attractive_point.x,2) + pow(pos_y-attractive_point.y,2)),ka-2);
-    grad_v_x += std::clamp((pos_x-attractive_point.x)*(-ka*norm_ka_term),-1.0,1.0);
-    grad_v_y += std::clamp((pos_y-attractive_point.y)*(-ka*norm_ka_term),-1.0,1.0);
+    wanted_speed.x = cl_cmd.x;
+    wanted_speed.y = cl_cmd.y;
+  }
 
-    wanted_speed.x = std::clamp(grad_v_x,-1.0,1.0);
-    wanted_speed.y = std::clamp(grad_v_y,-1.0,1.0);
+  bool compute_attr_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y, bool check_cmd){
+    //when launched, the program already checked that we have either a received attractive point or a cmd_vel teleoperation.
+    if(check_cmd){ //if nullptr, that mean that the program receive a attractive point to start
+      double cmd_norm = sqrt(pow(input_cmd.linear.x,2) + pow(input_cmd.linear.y,2));
+      if(cmd_norm > zero_padding_radius){ //then we should apply the received CMD rather than doing the point following
+        double remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0)/cmd_norm;
+        geometry_msgs::msg::Vector3 rob_frame_cmd;
+        rob_frame_cmd.x = input_cmd.linear.x*remap_ratio;
+        rob_frame_cmd.y = input_cmd.linear.y*remap_ratio;
+        rob_frame_cmd.z = input_cmd.angular.z;
+        geometry_msgs::msg::Vector3 world_frame_cmd;
+        rotate2Dvect(world_frame_cmd,rob_frame_cmd,vector_map_robot.z);
+        cmd_result.x = world_frame_cmd.x;
+        cmd_result.y = world_frame_cmd.y;
+        cmd_result.z = world_frame_cmd.z;
+        return false;
+      }
+    }
+    //otherwise we do the point following
+    double cmd_d_x = ka_force*(attractive_point.x-x);
+    double cmd_d_y = ka_force*(attractive_point.y-y);
+    double remap_ratio = 0.0;
+    double cmd_norm = sqrt(pow(cmd_d_x,2) + pow(cmd_d_y,2));
+    if(cmd_norm > 0.0){ //otherwise remap ratio keep default value of 0.0
+        remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0001)/cmd_norm;
+    }
+    cmd_result.x = cmd_d_x*remap_ratio;
+    cmd_result.y = cmd_d_y*remap_ratio;
+    cmd_result.z = 0.0;
+    return true;
+  }
+
+  void compute_rep_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y){
+    double minus_grad_v_x = 0.0;
+    double minus_grad_v_y = 0.0;
+    for(int i=0; i<repulsive_points.size(); i++){
+        double norm_term = sqrt(pow(x-repulsive_points[i].x,2) + pow(y-repulsive_points[i].y,2));
+        double exp_term = exp(kr_slope*(kr_dist-norm_term));
+        if(norm_term > 0.0){
+            minus_grad_v_x += kr_height*(x-repulsive_points[i].x)*(exp_term/norm_term);
+            minus_grad_v_y += kr_height*(y-repulsive_points[i].y)*(exp_term/norm_term);
+        }
+    }
+    double remap_ratio=0.0;
+    double cmd_norm = sqrt(pow(minus_grad_v_x,2) + pow(minus_grad_v_y,2));
+    if(cmd_norm>0.0){
+      //else it will keep default value of 0.0
+      remap_ratio = clamp_not_zero(cmd_norm,0.0,max_spd_norm,0.0)/cmd_norm;
+    }
+    cmd_result.x = minus_grad_v_x*remap_ratio;
+    cmd_result.y = minus_grad_v_y*remap_ratio;
+  }
+
+  double clamp_not_zero(double val,double min_lim,double max_lim,double null_radius){ 
+    //values should be norms > 0.0
+    double new_val=val;
+    if (val > max_lim){
+        new_val = max_lim;
+    }
+    else if(val < min_lim && val>null_radius){
+        new_val = min_lim;
+    }
+    else if(val < null_radius){
+        new_val = 0.0;
+    }
+    return new_val;
   }
 
   int update_tf(std::stringstream &debug_ss){
@@ -207,7 +313,7 @@ private:
     }
   }
 
-  void publishVectorField()
+  void publishVectorField(bool check_cmd)
   {
       visualization_msgs::msg::MarkerArray marker_array;
 
@@ -250,7 +356,7 @@ private:
           start_point.y = vector_map_robot.y+((int(i/field_grid_reso_x)*dy)-field_grid_y_elong/2);
           start_point.z = 0.0;
           geometry_msgs::msg::Vector3 pos_speed;
-          minus_grad(pos_speed,start_point.x,start_point.y);
+          minus_grad(pos_speed,start_point.x,start_point.y,check_cmd);
           end_point.x = start_point.x + pos_speed.x*arrows_size_multiplier;
           end_point.y = start_point.y + pos_speed.y*arrows_size_multiplier;
           end_point.z = 0.0;
@@ -268,7 +374,6 @@ private:
     twist_msg.linear.x = vx;
     twist_msg.linear.y = vy;
     twist_msg.angular.z = w;
-    //TDM Put commands in robots frame (use transform 2D points)
 
     // create a twist stamped message
     auto twist_stamped_msg = std::make_shared<geometry_msgs::msg::TwistStamped>();
@@ -285,88 +390,103 @@ private:
   }
 
   void initialize_common_params(){
-      this->declare_parameter("rate", 20.0);
-      this->declare_parameter("repulsive_scan_topic", "scan");
-      this->declare_parameter("attractive_point_topic", "clicked_point");
-      this->declare_parameter("publish_cmd_topic", "cmd_vel");
-      this->declare_parameter("publish_command_feedback_topic", "cmd_vel_vector");
-      this->declare_parameter("keep_alive_topic", "vector_field_controller_alive");
-      this->declare_parameter("keep_alive_timeout", 1.0);
-      this->declare_parameter("robot_frame", "base_link");
-      this->declare_parameter("map_frame", "map");
-      this->declare_parameter("control_type", "omni");
-      this->declare_parameter("k_repulse", 1.0);
-      this->declare_parameter("k_attract", 1.0);
-      this->declare_parameter("v_min", 0.1);
-      this->declare_parameter("v_max", 1.0);
-      this->declare_parameter("publish_field", false);
-      this->declare_parameter("publish_field_topic", "vector_field");
-      this->declare_parameter("field_grid_reso_x", 10);
-      this->declare_parameter("field_grid_reso_y", 10);
-      this->declare_parameter("field_grid_x_elong", 5.0);
-      this->declare_parameter("field_grid_y_elong", 5.0);
-      this->declare_parameter("arrows_size_multiplier", 0.1);
-      this->declare_parameter("debug", false);
-      this->declare_parameter("debug_file_path", "ros2_vector_field_controller_debug.txt");
+    this->declare_parameter("rate", 20.0);
+    this->declare_parameter("input_repulsive_scan_topic", "scan");
+    this->declare_parameter("input_attractive_point_topic", "clicked_point");
+    this->declare_parameter("input_cmd_topic", "cmd_vel_teleop_joy");
+    this->declare_parameter("output_cmd_topic", "cmd_vel_navig");
+    this->declare_parameter("output_command_feedback_topic", "cmd_vel_vector");
+    this->declare_parameter("input_keep_alive_topic", "vector_field_controller_alive");
+    this->declare_parameter("keep_alive_timeout", 1.0);
+    this->declare_parameter("robot_frame", "base_link");
+    this->declare_parameter("map_frame", "map");
+    this->declare_parameter("control_type", "omni");
+    this->declare_parameter("max_spd_norm", 1.0);
+    this->declare_parameter("zero_padding_radius", 0.01);
+    this->declare_parameter("min_spd_norm", 0.1);
+    this->declare_parameter("min_goal_dist", 0.1);
+    this->declare_parameter("ka_force", 3.0);
+    this->declare_parameter("kr_dist", 0.8);
+    this->declare_parameter("kr_height", 1.0);
+    this->declare_parameter("kr_slope", 30.0);
+    this->declare_parameter("publish_field", true);
+    this->declare_parameter("output_field_topic", "vector_field");
+    this->declare_parameter("field_grid_reso_x", 30);
+    this->declare_parameter("field_grid_reso_y", 30);
+    this->declare_parameter("field_grid_x_elong", 6.0);
+    this->declare_parameter("field_grid_y_elong", 6.0);
+    this->declare_parameter("arrows_size_multiplier", 0.1);
+    this->declare_parameter("debug", true);
+    this->declare_parameter("debug_file_path", "/home/jrluser/Desktop/test_workspace/src/ros2-vector-field-controller/ros2_vector_field_controller/ros2_vector_field_controller_debug.txt");
   }
 
   void refresh_common_params(){
-      this->get_parameter("use_sim_time",use_sim_time); //managed by launch file
-      this->get_parameter("rate", rate);
-      this->get_parameter("repulsive_scan_topic", repulsive_scan_topic);
-      this->get_parameter("attractive_point_topic", attractive_point_topic);
-      this->get_parameter("publish_cmd_topic", publish_cmd_topic);
-      this->get_parameter("publish_command_feedback_topic", publish_command_feedback_topic);
-      this->get_parameter("keep_alive_topic", keep_alive_topic);
-      this->get_parameter("keep_alive_timeout", keep_alive_timeout);
-      this->get_parameter("robot_frame", robot_frame);
-      this->get_parameter("map_frame", map_frame);
-      this->get_parameter("control_type", control_type);
-      this->get_parameter("k_repulse", k_repulse);
-      this->get_parameter("k_attract", k_attract);
-      this->get_parameter("v_min", v_min);
-      this->get_parameter("v_max", v_max);
-      this->get_parameter("publish_field", publish_field);
-      this->get_parameter("publish_field_topic", publish_field_topic);
-      this->get_parameter("field_grid_reso_x", field_grid_reso_x);
-      this->get_parameter("field_grid_reso_y", field_grid_reso_y);
-      this->get_parameter("field_grid_x_elong", field_grid_x_elong);
-      this->get_parameter("field_grid_y_elong", field_grid_y_elong);
-      this->get_parameter("arrows_size_multiplier", arrows_size_multiplier);
-      this->get_parameter("debug",debug);
-      this->get_parameter("debug_file_path",debug_file_path);
+    this->get_parameter("use_sim_time", use_sim_time); //managed by launch file
+    this->get_parameter("rate", rate);
+    this->get_parameter("input_repulsive_scan_topic", input_repulsive_scan_topic);
+    this->get_parameter("input_attractive_point_topic", input_attractive_point_topic);
+    this->get_parameter("input_cmd_topic", input_cmd_topic);
+    this->get_parameter("output_cmd_topic", output_cmd_topic);
+    this->get_parameter("output_command_feedback_topic", output_command_feedback_topic);
+    this->get_parameter("input_keep_alive_topic", input_keep_alive_topic);
+    this->get_parameter("keep_alive_timeout", keep_alive_timeout);
+    this->get_parameter("robot_frame", robot_frame);
+    this->get_parameter("map_frame", map_frame);
+    this->get_parameter("control_type", control_type);
+    this->get_parameter("max_spd_norm", max_spd_norm);
+    this->get_parameter("zero_padding_radius", zero_padding_radius);
+    this->get_parameter("min_spd_norm", min_spd_norm);
+    this->get_parameter("min_goal_dist", min_goal_dist);
+    this->get_parameter("ka_force", ka_force);
+    this->get_parameter("kr_dist", kr_dist);
+    this->get_parameter("kr_height", kr_height);
+    this->get_parameter("kr_slope", kr_slope);
+    this->get_parameter("publish_field", publish_field);
+    this->get_parameter("output_field_topic", output_field_topic);
+    this->get_parameter("field_grid_reso_x", field_grid_reso_x);
+    this->get_parameter("field_grid_reso_y", field_grid_reso_y);
+    this->get_parameter("field_grid_x_elong", field_grid_x_elong);
+    this->get_parameter("field_grid_y_elong", field_grid_y_elong);
+    this->get_parameter("arrows_size_multiplier", arrows_size_multiplier);
+    this->get_parameter("debug", debug);
+    this->get_parameter("debug_file_path", debug_file_path);
   }
 
   void debug_params(){
-      std::stringstream debug_ss;
-      debug_ss << "\nPARAMETERS:"
-              << "\nuse_sim_time: " << use_sim_time
-              << "\nrate: " << rate
-              << "\nrepulsive_scan_topic: " << repulsive_scan_topic
-              << "\nattractive_point_topic: " << attractive_point_topic
-              << "\npublish_cmd_topic: " << publish_cmd_topic
-              << "\npublish_command_feedback_topic: " << publish_command_feedback_topic
-              << "\nkeep_alive_topic: " << keep_alive_topic
-              << "\nkeep_alive_timeout: " << keep_alive_timeout
-              << "\nrobot_frame: " << robot_frame
-              << "\nmap_frame: " << map_frame
-              << "\ncontrol_type: " << control_type
-              << "\nk_repulse: " << k_repulse
-              << "\nk_attract: " << k_attract
-              << "\nv_min: " << v_min
-              << "\nv_max: " << v_max
-              << "\npublish_field: " << publish_field
-              << "\npublish_field_topic: " << publish_field_topic
-              << "\nfield_grid_reso_x: " << field_grid_reso_x
-              << "\nfield_grid_reso_y: " << field_grid_reso_y
-              << "\nfield_grid_x_elong: "<< field_grid_x_elong
-              << "\nfield_grid_y_elong: "<< field_grid_y_elong
-              << "\narrows_size_multiplier: "<< arrows_size_multiplier
-              << "\ndebug: " << debug
-              << "\ndebug_file_path: " << debug_file_path;
-      std::string debug_msg = debug_ss.str();
-      write_debug(debug_file_path, debug_msg, false);
-      //RCLCPP_INFO(this->get_logger(), "%s",debug_msg.c_str());
+    std::stringstream debug_ss;
+    debug_ss << "\nPARAMETERS:"
+            << "\nuse_sim_time: " << use_sim_time
+            << "\nrate: " << rate
+            << "\ninput_repulsive_scan_topic: " << input_repulsive_scan_topic
+            << "\ninput_attractive_point_topic: " << input_attractive_point_topic
+            << "\ninput_cmd_topic: " << input_cmd_topic
+            << "\noutput_cmd_topic: " << output_cmd_topic
+            << "\noutput_command_feedback_topic: " << output_command_feedback_topic
+            << "\ninput_keep_alive_topic: " << input_keep_alive_topic
+            << "\nkeep_alive_timeout: " << keep_alive_timeout
+            << "\nrobot_frame: " << robot_frame
+            << "\nmap_frame: " << map_frame
+            << "\ncontrol_type: " << control_type
+            << "\nmax_spd_norm: " << max_spd_norm
+            << "\nzero_padding_radius: " << zero_padding_radius
+            << "\nmin_spd_norm: " << min_spd_norm
+            << "\nmin_goal_dist: " << min_goal_dist
+            << "\nka_force: " << ka_force
+            << "\nkr_dist: " << kr_dist
+            << "\nkr_height: " << kr_height
+            << "\nkr_slope: " << kr_slope
+            << "\npublish_field: " << publish_field
+            << "\noutput_field_topic: " << output_field_topic
+            << "\nfield_grid_reso_x: " << field_grid_reso_x
+            << "\nfield_grid_reso_y: " << field_grid_reso_y
+            << "\nfield_grid_x_elong: "<< field_grid_x_elong
+            << "\nfield_grid_y_elong: "<< field_grid_y_elong
+            << "\narrows_size_multiplier: "<< arrows_size_multiplier
+            << "\ndebug: " << debug
+            << "\ndebug_file_path: " << debug_file_path;
+    std::string debug_msg = debug_ss.str();
+    write_debug(debug_file_path, debug_msg, false);
+    //RCLCPP_INFO(this->get_logger(), "%s",debug_msg.c_str());
   }
 
   void write_debug(std::string file, std::string text,  bool append = true){
@@ -385,21 +505,26 @@ private:
   //parameters
   bool use_sim_time = false; //used
   double rate; //used
-  std::string repulsive_scan_topic; //used
-  std::string attractive_point_topic; //used
-  std::string publish_cmd_topic; //used
-  std::string publish_command_feedback_topic; //used
-  std::string keep_alive_topic; //used
+  std::string input_repulsive_scan_topic; //used
+  std::string input_attractive_point_topic; //used
+  std::string input_cmd_topic; //used
+  std::string output_cmd_topic; //used
+  std::string output_command_feedback_topic; //used
+  std::string input_keep_alive_topic; //used
   double keep_alive_timeout;
   std::string robot_frame; //used
   std::string map_frame; //used
   std::string control_type;
-  double k_repulse; //used
-  double k_attract; //used
-  double v_min;
-  double v_max;
+  double max_spd_norm;
+  double zero_padding_radius;
+  double min_spd_norm;
+  double min_goal_dist;
+  double ka_force; 
+  double kr_dist;
+  double kr_height; 
+  double kr_slope;
   bool publish_field; //used
-  std::string publish_field_topic; //used
+  std::string output_field_topic; //used
   int field_grid_reso_x; //used
   int field_grid_reso_y; //used
   double field_grid_x_elong; //used
@@ -413,6 +538,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr attractive_point_subscriber;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr repulsive_scan_subscriber;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_subscription_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_subscriber;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_publisher;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vector_publisher;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr vector_field_publisher;
@@ -421,15 +547,20 @@ private:
   //store received data
   sensor_msgs::msg::LaserScan::SharedPtr repulsive_scan_msg;
   geometry_msgs::msg::PointStamped::SharedPtr attractive_point_msg; //not directly used, we use directly 'attractive_point'
+  geometry_msgs::msg::Twist::SharedPtr input_cmd_msg;
   std_msgs::msg::Bool::SharedPtr keep_alive_msg;
 
   //store data to compute
   std::vector<geometry_msgs::msg::Point> repulsive_points;
   geometry_msgs::msg::Point attractive_point;
+  geometry_msgs::msg::Twist input_cmd;
   geometry_msgs::msg::Vector3 vector_map_robot; //(x,y,heading) offsets
+  bool check_cmd = false;
 
   //concurrence
   std::mutex mutex_debug_file;
+  std::mutex attractive_point_mutex;
+  std::mutex input_cmd_mutex;
   std::mutex raw_scan_mutex;
 
   //transformations listening

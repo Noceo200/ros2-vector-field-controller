@@ -1,5 +1,5 @@
 /*
-LAST MODIF(DD/MM/YYYY): 17/06/2024
+LAST MODIF(DD/MM/YYYY): 10/07/2024
 */
 
 #include "rclcpp/rclcpp.hpp"
@@ -583,6 +583,12 @@ void transform_2D_point(double &result_x, double &result_y,double init_x, double
     //Unpack
     result_x = X1(0,0);
     result_y = X1(1,0);
+}
+
+void rotate2Dvect(geometry_msgs::msg::Vector3 &result, geometry_msgs::msg::Vector3 vect_to_rotate, double rotation_angle){
+    result.x = vect_to_rotate.x*cos(rotation_angle)-vect_to_rotate.y*sin(rotation_angle);
+    result.y = vect_to_rotate.x*sin(rotation_angle)+vect_to_rotate.y*cos(rotation_angle);
+    result.z = vect_to_rotate.z;
 }
 
 int copy_ranges(sensor_msgs::msg::LaserScan::SharedPtr host_scan, sensor_msgs::msg::LaserScan::SharedPtr target_scan){

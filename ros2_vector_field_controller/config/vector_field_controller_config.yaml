@@ -3,29 +3,43 @@ vector_field_controller_node:
     
     #node configuration
     rate: 20.0
-    repulsive_scan_topic: "scan" #the laserscan that will be used to consider repulsive points
-    attractive_point_topic: "clicked_point" #attractive point
-    publish_cmd_topic: "cmd_vel" #on which topic to publish the speed commands
-    publish_command_feedback_topic: "cmd_vel_vector" #publish a pose visualizable on RVIZ
-    keep_alive_topic: "vector_field_controller_alive" #topic to keep the controller running or to stop it
+    input_repulsive_scan_topic: "scan" #the laserscan that will be used to consider repulsive points
+    input_attractive_point_topic: "clicked_point" #attractive point
+    input_cmd_topic: "cmd_vel_teleop_joy" #other speed command to apply, prioritized to the point following
+    output_cmd_topic: "cmd_vel" #on which topic to publish the final speed commands
+    output_command_feedback_topic: "cmd_vel_vector" #publish a twistStamped message visualizable on RVIZ
+    input_keep_alive_topic: "vector_field_controller_alive" #topic to keep the controller running or to stop it
     keep_alive_timeout: 1.0 #if nothing is received on 'keep_alive_topic' then this delay define how much time to wait befor to stop the controller.
 
     #vector field configuration 
     robot_frame: "base_link"
     map_frame: "map"
     control_type: "omni" #controller type 'diff' (differential) or 'omni' (omnidirectionnal)
-    k_repulse: -4.0 #repulsivity multiplier
-    k_attract: 1.0 #attractivity multiplier
-    v_min: 0.1 #minimal norm of speed vector
-    v_max: 1.0 #maximal norm of speed vector
+    max_spd_norm: 1.0 #used for repulsive, attractive and final commands clamping, the output command will not have a norm higher than this value
+    zero_padding_radius: 0.01 #define minimal norm of speeds commands to be receive on 'input_cmd_topic' before to apply it.
 
-    #options
-    publish_field: true
-    publish_field_topic: "vector_field" #on which topic to publish the vector field (pose array)
-    field_grid_reso_x: 30 #how many points to show
-    field_grid_reso_y: 30
-    field_grid_x_elong: 6.0 #size of vector field to print, around robot's pose
-    field_grid_y_elong: 6.0
+    #linear attractivity
+    min_spd_norm: 0.1 #used only to clamp minimal attractive command
+    min_goal_dist: 0.1 #minimal distance between attractive point and current position (if point following running) to consider the robot successful and stop it
+    ka_force: 3.0 #proportionnal coefficient for attractivity
+
+    #exponential repulsivity
+    #check formulas to avoid INFINITY values 'kr_height*(exp(kr_slope*(kr_dist-x)))'' : https://www.desmos.com/calculator
+    kr_dist: 0.8 #repulsivity coefficient, specify the radius around the point before the effect start to exponentially disapear, can be negative
+    kr_height: 1.0 #linearly mutiply the repulsive forces
+    kr_slope: 30.0 #modify the curve, how abrupt it is to lose effect
+
+    #visual options
+    publish_field: true #reduce performances
+    output_field_topic: "vector_field" #on which topic to publish the vector field (marker array)
+    field_grid_reso_x: 60 #how many points to show
+    field_grid_reso_y: 60
+    field_grid_x_elong: 10.0 #size of vector field to print, around robot's pose
+    field_grid_y_elong: 10.0
+
+    publish_path: true #TDM to add
+    output_path_topic: "vector_field_path" #TDM to add#marker array
+
     arrows_size_multiplier: 0.1
 
     #debuggging

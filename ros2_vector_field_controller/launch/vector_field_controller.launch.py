@@ -9,6 +9,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
     toolbox_dir=get_package_share_directory('ros2_vector_field_controller')
+    #ros2 launch ros2_vector_field_controller vector_field_controller.launch.py use_sim_time:=true
 
     declare_use_sim_time_argument = DeclareLaunchArgument(
         'use_sim_time',

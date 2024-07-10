@@ -8,8 +8,13 @@ def draw_field_perso(ax, f, q_points, p_points, xmin, xmax, ymin, ymax, a):
     R = sqrt(VX ** 2 + VY ** 2)
     # Calculate the maximum value of R to use it for scaling
     max_R = np.max(R)
+    #print("(50,65):(x,y):("+str(X1[50,65])+","+str(X2[50,65])+") norm="+str(R[50,65]))
+    #print("(50,15):(x,y):("+str(X1[50,15])+","+str(X2[50,15])+") norm="+str(R[50,15]))
+    #print("(65,50):(x,y):("+str(X1[65,50])+","+str(X2[65,50])+") norm="+str(R[65,50]))
+    #print("(15,50):(x,y):("+str(X1[15,50])+","+str(X2[15,50])+") norm="+str(R[15,50]))
+    #print("(50,50):(x,y):("+str(X1[50,50])+","+str(X2[50,50])+") norm="+str(R[50,50]))
     # Use quiver to plot arrows with lengths proportional to R
-    ax.quiver(Mx, My, (0.9*a)*(VX / max_R), (0.9*a)*(VY / max_R))
+    ax.quiver(Mx, My, (0.9*a)*(VX / max_R), (0.9*a)*(VY / max_R),color="gray",alpha=0.5)
 
 
 def clamp(x,val1,val2):
