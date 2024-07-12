@@ -32,7 +32,7 @@ def vector_field(x,y,q_points, p_point):  #-grad(V) #x1 and x2 can be matrix bec
     max_spd_norm = 1.0 #used for repulsive, attractive and final commands clamping
     null_spd_radius = 0.01 #define minimal cmd_vel sent to be considered
     min_goal_dist = 0.1 #minimal distance between pa and p (if used) to consider the robot successful 
-    ka_force = 3.0 #coeff attractivity
+    ka_force = 0.0 #coeff attractivity
     kr_dist = 0.0 #coeff de repoussement (exponential position), can be negative
     kr_force = 3.0 #1.0 #mutiply repulsive force
 
@@ -179,7 +179,7 @@ cmd_vel = array([[0.0],[0.0]])
 x = array([[-6,0,0,0]]).T #x,y,v,θ
 θbar = 0
 dt = 0.1
-s = 7
+s = 10
 ax=init_figure(-s,s,-s,s)
 pause(1) #to have time to record
 
