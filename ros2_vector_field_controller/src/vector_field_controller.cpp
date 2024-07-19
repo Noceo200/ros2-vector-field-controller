@@ -18,6 +18,8 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 #include <vector>
 
+bool flow_debug = true; //used to print debug lines
+
 class VectorFieldController : public rclcpp::Node
 {
 public:
@@ -117,6 +119,7 @@ private:
         input_cmd_mutex.unlock();
         check_cmd = true;
       }
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK1");}
       debug_ss << "Getting robot state and repulsive obstacles from TFs and scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
       int res = update_tf(debug_ss);
       if(update_2Dpoints_from_scan(vector_map_robot.x,vector_map_robot.y)){
@@ -124,12 +127,16 @@ private:
         geometry_msgs::msg::Vector3 wanted_speed_world_frame;
         //compute speed according to robot position
         debug_ss  << "Attractive point (x,y): (" << attractive_point.x<< " ; " << attractive_point.y<< ")" << std::endl;
+        if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2");}
         minus_grad(wanted_speed_world_frame,vector_map_robot.x,vector_map_robot.y,check_cmd);
         //rotate vector from world to robot_frame
         geometry_msgs::msg::Vector3 wanted_speed_rob_frame;
+        if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK3");}
         rotate2Dvect(wanted_speed_rob_frame,wanted_speed_world_frame,-vector_map_robot.z);
         //publish commands
+        if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4");}
         publish_cmd(wanted_speed_rob_frame.x,wanted_speed_rob_frame.y,0.0);
+        if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK5");}
         if(publish_field){
           publishVectorField(check_cmd);
         }
@@ -137,6 +144,7 @@ private:
       else{
         debug_ss << "Coudn't transform the scan to repulsive points, aborting..." << std::endl;
       }
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK6");}
     }
     else{
       debug_ss << "waiting to receive scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
@@ -376,16 +384,21 @@ private:
     twist_msg.angular.z = w;
 
     // create a twist stamped message
+    if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4.1");}
     auto twist_stamped_msg = std::make_shared<geometry_msgs::msg::TwistStamped>();
+    if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4.1.2");}
     update_stamp();
+    if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4.1.3");}
     twist_stamped_msg->header.stamp = current_global_stamp;
     twist_stamped_msg->header.frame_id = robot_frame;
     twist_stamped_msg->twist = twist_msg;
     twist_stamped_msg->twist.linear.x *= 3.0*arrows_size_multiplier;
     twist_stamped_msg->twist.linear.y *= 3.0*arrows_size_multiplier;
+    if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4.2");}
 
     // publish the twist stamped message
     cmd_publisher->publish(twist_msg);
+    if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4.3");}
     cmd_vector_publisher->publish(*twist_stamped_msg);
   }
 

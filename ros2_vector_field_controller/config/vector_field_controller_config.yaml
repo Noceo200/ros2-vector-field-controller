@@ -2,7 +2,7 @@ vector_field_controller_node:
   ros__parameters:
     
     #node configuration
-    rate: 20.0
+    rate: 30.0
     input_repulsive_scan_topic: "scan" #the laserscan that will be used to consider repulsive points
     input_attractive_point_topic: "clicked_point" #attractive point
     input_cmd_topic: "cmd_vel_teleop_joy" #other speed command to apply, prioritized to the point following
@@ -14,7 +14,7 @@ vector_field_controller_node:
     #vector field configuration 
     robot_frame: "base_link"
     map_frame: "map"
-    control_type: "omni" #controller type 'diff' (differential) or 'omni' (omnidirectionnal)
+    control_type: "omni" #(only omni available for now) controller type 'diff' (differential) or 'omni' (omnidirectionnal)
     max_spd_norm: 1.0 #used for repulsive, attractive and final commands clamping, the output command will not have a norm higher than this value
     zero_padding_radius: 0.01 #define minimal norm of speeds commands to be receive on 'input_cmd_topic' before to apply it.
 
@@ -30,7 +30,7 @@ vector_field_controller_node:
     kr_slope: 30.0 #modify the curve, how abrupt it is to lose effect
 
     #visual options
-    publish_field: true #reduce performances
+    publish_field: false #reduce performances
     output_field_topic: "vector_field" #on which topic to publish the vector field (marker array)
     field_grid_reso_x: 60 #how many points to show
     field_grid_reso_y: 60
