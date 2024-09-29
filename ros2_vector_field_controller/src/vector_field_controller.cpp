@@ -528,14 +528,14 @@ private:
   std::string robot_frame; //used
   std::string map_frame; //used
   std::string control_type;
-  double max_spd_norm;
-  double zero_padding_radius;
-  double min_spd_norm;
-  double min_goal_dist;
-  double ka_force; 
-  double kr_dist;
-  double kr_height; 
-  double kr_slope;
+  double max_spd_norm; //used
+  double zero_padding_radius; //used
+  double min_spd_norm; //used
+  double min_goal_dist; //used
+  double ka_force; //used
+  double kr_dist; //used
+  double kr_height; //used
+  double kr_slope; //used
   bool publish_field; //used
   std::string output_field_topic; //used
   int field_grid_reso_x; //used
