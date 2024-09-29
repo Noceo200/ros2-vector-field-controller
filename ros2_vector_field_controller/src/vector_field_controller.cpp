@@ -18,7 +18,7 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 #include <vector>
 
-bool flow_debug = true; //used to print debug lines
+bool flow_debug = false; //used to print debug lines
 
 class VectorFieldController : public rclcpp::Node
 {
@@ -49,6 +49,9 @@ public:
     if(use_sim_time){
         clock_subscription_ = this->create_subscription<rosgraph_msgs::msg::Clock>("/clock", sensor_qos, std::bind(&VectorFieldController::ClockCallback, this, std::placeholders::_1));
     }
+    else{
+        clock = this->get_clock();
+    }
 
     //publishers
     cmd_publisher = this->create_publisher<geometry_msgs::msg::Twist>(output_cmd_topic, 10);
@@ -65,7 +68,11 @@ public:
 private:
 
   void aliveCallback(const std_msgs::msg::Bool::SharedPtr msg) {
+    keep_alive_mutex.lock();
     keep_alive_msg = msg;
+    keep_alive_mutex.unlock();
+    update_stamp();
+    keep_alive_msg_last_stamp= current_global_stamp;
   }
 
   void attractivePointCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg) {
@@ -84,6 +91,8 @@ private:
     input_cmd_mutex.lock();
     input_cmd_msg = msg;
     input_cmd_mutex.unlock();
+    update_stamp();
+    input_cmd_msg_last_stamp = current_global_stamp;
   }
 
   void ClockCallback(const rosgraph_msgs::msg::Clock::SharedPtr msg)
@@ -101,6 +110,17 @@ private:
     }
   }
 
+  void check_alive(){
+    if(keep_alive_msg != nullptr){
+      keep_alive_mutex.lock();
+      keep_alive = keep_alive_msg->data;
+      keep_alive_mutex.unlock();
+    }
+    else{
+      keep_alive = false;
+    }
+  }
+
   void compute_field(){
     std::stringstream debug_ss;
 
@@ -108,16 +128,21 @@ private:
     
     if(repulsive_scan_msg != nullptr && (attractive_point_msg != nullptr || input_cmd_msg!=nullptr)){
       //extract received data, and store it in class variable
+      bool attractive_point_received = false;
+      bool cmd_msg_received = false;
       if(attractive_point_msg != nullptr){
         attractive_point_mutex.lock();
         attractive_point = attractive_point_msg->point;
         attractive_point_mutex.unlock();
+        attractive_point_received = true;
+        debug_ss << "Attractive point Received! (x,y): (" << attractive_point.x<< " ; " << attractive_point.y<< ")" << std::endl;
       }
       if(input_cmd_msg!=nullptr){
         input_cmd_mutex.lock();
         input_cmd = *input_cmd_msg;
         input_cmd_mutex.unlock();
-        check_cmd = true;
+        cmd_msg_received = true;
+        debug_ss << "Speed commands Received! (Priority over Attractive point) (vx,vy,w): (" << input_cmd.linear.x<< " ; " << input_cmd.linear.y << " ; " << input_cmd.angular.z << ")" << std::endl;
       }
       if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK1");}
       debug_ss << "Getting robot state and repulsive obstacles from TFs and scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
@@ -126,19 +151,23 @@ private:
         debug_ss << "Scan successfully transformed to repulsive points (Transformation: `"<< robot_frame << "' to '" << map_frame <<"' got)" << std::endl;
         geometry_msgs::msg::Vector3 wanted_speed_world_frame;
         //compute speed according to robot position
-        debug_ss  << "Attractive point (x,y): (" << attractive_point.x<< " ; " << attractive_point.y<< ")" << std::endl;
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2");}
-        minus_grad(wanted_speed_world_frame,vector_map_robot.x,vector_map_robot.y,check_cmd);
+        minus_grad(wanted_speed_world_frame,vector_map_robot.x,vector_map_robot.y,attractive_point_received,cmd_msg_received,true,debug_ss);
+        debug_ss  << "Speed to follow (with collision avoidance) (world's frame)(vx,vy,w): (" << wanted_speed_world_frame.x<< " ; " << wanted_speed_world_frame.y<< " ; " << wanted_speed_world_frame.z<< ")" << std::endl;
         //rotate vector from world to robot_frame
         geometry_msgs::msg::Vector3 wanted_speed_rob_frame;
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK3");}
         rotate2Dvect(wanted_speed_rob_frame,wanted_speed_world_frame,-vector_map_robot.z);
+        debug_ss  << "Speed to follow (with collision avoidance) (robot's frame)(vx,vy,w): (" << wanted_speed_rob_frame.x<< " ; " << wanted_speed_rob_frame.y<<" ; " << wanted_speed_rob_frame.z<< ")" << std::endl;
         //publish commands
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4");}
         publish_cmd(wanted_speed_rob_frame.x,wanted_speed_rob_frame.y,0.0);
+        debug_ss  << "Speed command Published on topic: " << output_cmd_topic << std::endl;
+        debug_ss  << "Speed command Visualisation Published on topic: " << output_command_feedback_topic << std::endl;
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK5");}
         if(publish_field){
-          publishVectorField(check_cmd);
+          publishVectorField(attractive_point_received,cmd_msg_received);
+          debug_ss  << "Field Published on topic: " << output_field_topic << std::endl;
         }
       }
       else{
@@ -147,8 +176,12 @@ private:
       if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK6");}
     }
     else{
-      debug_ss << "waiting to receive scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;
-      debug_ss << "waiting to receive point on topic '"<< input_attractive_point_topic <<"'"<<std::endl;
+      if(repulsive_scan_msg != nullptr){debug_ss << "waiting to receive scan on topic '"<< input_repulsive_scan_topic <<"'"<<std::endl;}
+      if(!(attractive_point_msg != nullptr || input_cmd_msg!=nullptr)){
+        debug_ss << "waiting to receive point on topic '"<< input_attractive_point_topic <<"' or speed command on topic '"<< input_cmd_topic <<"'"<<std::endl;
+        debug_ss << "\n!!! To have the point following working, you have to keep publishing 'true' (std_msgs/Bool Message) on the topic: '"<< input_keep_alive_topic <<"' !!!"<<std::endl;
+        debug_ss << "The above is not necessary when using a speed command for assissted teleoperation. But the computation will pause if your 'keep_alive_timeout' value is exceeded on '" << input_cmd_topic << "'." <<std::endl;
+      }
     }
     
     if(debug){
@@ -189,7 +222,7 @@ private:
     return 1;
   }
 
-  void minus_grad(geometry_msgs::msg::Vector3 &wanted_speed, double pos_x, double pos_y, bool check_cmd){
+  void minus_grad(geometry_msgs::msg::Vector3 &wanted_speed, double pos_x, double pos_y, bool attractive_point_received,bool cmd_msg_received, bool for_robot_cmd, std::stringstream &debug_ss){
     /*Used class variables:
       double max_spd_norm
       double zero_padding_radius
@@ -201,6 +234,10 @@ private:
       attractive_point
       repulsive_points
     */
+    /*
+    for_robot_cmd: This function is also used to compute the arrows when showing the vector field, so we need to specify if this function is use for that or for generating the robot command.
+    Some behavior depend on it. 
+    */
 
     //Compute clamped repulsive command
     geometry_msgs::msg::Vector3 cl_rep_cmd;
@@ -208,9 +245,8 @@ private:
 
     //Compute clamped attractivity command
     geometry_msgs::msg::Vector3 cl_attr_cmd;
-    bool point_following_mode;
-    point_following_mode = compute_attr_cmd(cl_attr_cmd,pos_x,pos_y,check_cmd);
-
+    bool point_following_mode = attractive_point_received && !cmd_msg_received; //cmd have priority over point following
+    compute_attr_cmd(cl_attr_cmd,pos_x,pos_y,point_following_mode);
     //Merge and clamp commands
     geometry_msgs::msg::Vector3 cmd;
     cmd.x = cl_rep_cmd.x + cl_attr_cmd.x;
@@ -225,10 +261,82 @@ private:
     geometry_msgs::msg::Vector3 cl_cmd;
     cl_cmd.x = cmd.x*remap_ratio;
     cl_cmd.y = cmd.y*remap_ratio;
+    cl_cmd.z = cmd.z;
 
-    if(point_following_mode){
+    if(point_following_mode){ //we compute stop condition for point following (when goal is reached)
       double pa_dist = sqrt(pow(pos_x-attractive_point.x,2)+pow(pos_y-attractive_point.y,2)); //distance between current position and attractive point
-      if(pa_dist <= min_goal_dist){
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2.1");}
+      double t_now = TimeToDouble(current_global_stamp);
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2.2");}
+      double t_last = TimeToDouble(keep_alive_msg_last_stamp);
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2.3");}
+      double delay = t_now - t_last;
+      bool alive_msg_timed_out = delay>keep_alive_timeout;
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2.4");}
+      check_alive();
+      if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK2.5");}
+      if(alive_msg_timed_out){ //timeout for receiving alive topic
+        cl_cmd.x = 0.0;
+        cl_cmd.y = 0.0;
+        cl_cmd.z = 0.0;
+        if(for_robot_cmd){
+          attractive_point_msg = nullptr;
+          RCLCPP_WARN(this->get_logger(),"The topic %s timed out! Configure and check debug file if this is unexpected",input_keep_alive_topic.c_str());
+        }
+        debug_ss << "\nTopic timeout! Computation stopped." << std::endl;
+        debug_ss << "Last message received on '" << input_keep_alive_topic << "' at " << t_last << "s" << std::endl;
+        debug_ss << "Current time: " << t_now << "s" << std::endl;
+        debug_ss << "Delay: " << delay << "s" << std::endl;
+        debug_ss << "Maximum delay authorized (timeout): " << keep_alive_timeout << "s" << std::endl;
+      }
+      else if(keep_alive == false){  //received topic for alive is false (user ask to stop point following)
+        cl_cmd.x = 0.0;
+        cl_cmd.y = 0.0;
+        cl_cmd.z = 0.0;
+        if(for_robot_cmd){
+          attractive_point_msg = nullptr;
+          RCLCPP_ERROR(this->get_logger(), "\n!!! To have the point following working, you have to keep publishing 'true' (std_msgs/Bool Message) on the topic: '%s' !!!",input_keep_alive_topic.c_str());
+        }
+        debug_ss << "\nComputation stopped!." << std::endl;
+        debug_ss << "Message on topic '" << input_keep_alive_topic << "' is set to 'false' or Unavailable." << std::endl;
+        debug_ss << "\n!!! To have the point following working, you have to keep publishing 'true' (std_msgs/Bool Message) on the topic: '"<< input_keep_alive_topic <<"' !!!"<<std::endl;
+      }
+      else if(pa_dist <= min_goal_dist){ //goal reached
+        cl_cmd.x = 0.0;
+        cl_cmd.y = 0.0;
+        cl_cmd.z = 0.0;
+        debug_ss << "GOAL REACHED:\n"
+         << "Distance to Goal " << std::fixed << std::setprecision(5) << pa_dist << "\n"
+         << "Distance to consider sucess: " << std::fixed << std::setprecision(5) << min_goal_dist << std::endl;
+        if(for_robot_cmd){attractive_point_msg = nullptr;}
+      }
+      else{
+        debug_ss << "GOAL NOT REACHED:\n"
+         << "Distance to Goal " << std::fixed << std::setprecision(5) << pa_dist << "\n"
+         << "Distance to consider sucess: " << std::fixed << std::setprecision(5) << min_goal_dist << std::endl;
+       }
+    }
+    else{ //we compute stop condition for speed commands following (when message is timed out)
+      double t_now = TimeToDouble(current_global_stamp);
+      double t_last = TimeToDouble(input_cmd_msg_last_stamp);
+      double delay = t_now - t_last;
+      bool cmd_msg_timed_out = delay>keep_alive_timeout;
+      double cmd_norm = sqrt(pow(cl_attr_cmd.x,2)+pow(cl_attr_cmd.y,2)); //only base on linear speed
+      if(cmd_msg_timed_out){
+        cl_cmd.x = 0.0;
+        cl_cmd.y = 0.0;
+        cl_cmd.z = 0.0;
+        if(for_robot_cmd){
+          input_cmd_msg = nullptr;
+          RCLCPP_WARN(this->get_logger(),"The topic %s timed out! Configure and check debug file if this is unexpected",input_cmd_topic.c_str());
+        }
+        debug_ss << "\nTopic timeout! Computation stopped." << std::endl;
+        debug_ss << "Last message received on '" << input_cmd_topic << "' at " << t_last << "s" << std::endl;
+        debug_ss << "Current time: " << t_now << "s" << std::endl;
+        debug_ss << "Delay: " << delay << "s" << std::endl;
+        debug_ss << "Maximum delay authorized (timeout): " << keep_alive_timeout << "s" << std::endl;
+      }
+      else if(cmd_norm == 0.0){ //we also keep the robot not moving (only linear motion) if the assissted teleoperation speeds are (0,0,0), this avoid the robot to moved by itself when an obstacle approach it.
         cl_cmd.x = 0.0;
         cl_cmd.y = 0.0;
       }
@@ -236,11 +344,12 @@ private:
 
     wanted_speed.x = cl_cmd.x;
     wanted_speed.y = cl_cmd.y;
+    wanted_speed.z = cl_cmd.z;
+
   }
 
-  bool compute_attr_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y, bool check_cmd){
-    //when launched, the program already checked that we have either a received attractive point or a cmd_vel teleoperation.
-    if(check_cmd){ //if nullptr, that mean that the program receive a attractive point to start
+  void compute_attr_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y, bool point_following_mode){
+    if(!point_following_mode){ //If we have a speed command to follow (priority over point following)
       double cmd_norm = sqrt(pow(input_cmd.linear.x,2) + pow(input_cmd.linear.y,2));
       if(cmd_norm > zero_padding_radius){ //then we should apply the received CMD rather than doing the point following
         double remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0)/cmd_norm;
@@ -253,21 +362,26 @@ private:
         cmd_result.x = world_frame_cmd.x;
         cmd_result.y = world_frame_cmd.y;
         cmd_result.z = world_frame_cmd.z;
-        return false;
+      }
+      else{
+        cmd_result.x = 0.0;
+        cmd_result.y = 0.0;
+        cmd_result.z = 0.0;
       }
     }
-    //otherwise we do the point following
-    double cmd_d_x = ka_force*(attractive_point.x-x);
-    double cmd_d_y = ka_force*(attractive_point.y-y);
-    double remap_ratio = 0.0;
-    double cmd_norm = sqrt(pow(cmd_d_x,2) + pow(cmd_d_y,2));
-    if(cmd_norm > 0.0){ //otherwise remap ratio keep default value of 0.0
-        remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0001)/cmd_norm;
+    else{ 
+      //otherwise we do the point following
+      double cmd_d_x = ka_force*(attractive_point.x-x);
+      double cmd_d_y = ka_force*(attractive_point.y-y);
+      double remap_ratio = 0.0;
+      double cmd_norm = sqrt(pow(cmd_d_x,2) + pow(cmd_d_y,2));
+      if(cmd_norm > 0.0){ //otherwise remap ratio keep default value of 0.0
+          remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0001)/cmd_norm;
+      }
+      cmd_result.x = cmd_d_x*remap_ratio;
+      cmd_result.y = cmd_d_y*remap_ratio;
+      cmd_result.z = 0.0;
     }
-    cmd_result.x = cmd_d_x*remap_ratio;
-    cmd_result.y = cmd_d_y*remap_ratio;
-    cmd_result.z = 0.0;
-    return true;
   }
 
   void compute_rep_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y){
@@ -321,7 +435,7 @@ private:
     }
   }
 
-  void publishVectorField(bool check_cmd)
+  void publishVectorField(bool attractive_point_received,bool cmd_msg_received)
   {
       visualization_msgs::msg::MarkerArray marker_array;
 
@@ -364,7 +478,8 @@ private:
           start_point.y = vector_map_robot.y+((int(i/field_grid_reso_x)*dy)-field_grid_y_elong/2);
           start_point.z = 0.0;
           geometry_msgs::msg::Vector3 pos_speed;
-          minus_grad(pos_speed,start_point.x,start_point.y,check_cmd);
+          std::stringstream dummy;
+          minus_grad(pos_speed,start_point.x,start_point.y,attractive_point_received,cmd_msg_received,false,dummy);
           end_point.x = start_point.x + pos_speed.x*arrows_size_multiplier;
           end_point.y = start_point.y + pos_speed.y*arrows_size_multiplier;
           end_point.z = 0.0;
@@ -524,7 +639,7 @@ private:
   std::string output_cmd_topic; //used
   std::string output_command_feedback_topic; //used
   std::string input_keep_alive_topic; //used
-  double keep_alive_timeout;
+  double keep_alive_timeout; //used
   std::string robot_frame; //used
   std::string map_frame; //used
   std::string control_type;
@@ -567,14 +682,18 @@ private:
   std::vector<geometry_msgs::msg::Point> repulsive_points;
   geometry_msgs::msg::Point attractive_point;
   geometry_msgs::msg::Twist input_cmd;
+  double init_last_times = 0.0;
+  builtin_interfaces::msg::Time input_cmd_msg_last_stamp = DoubleToTime(init_last_times);
   geometry_msgs::msg::Vector3 vector_map_robot; //(x,y,heading) offsets
-  bool check_cmd = false;
+  bool keep_alive = false; //Used to pause or start the computing
+  builtin_interfaces::msg::Time keep_alive_msg_last_stamp = DoubleToTime(init_last_times);
 
   //concurrence
   std::mutex mutex_debug_file;
   std::mutex attractive_point_mutex;
   std::mutex input_cmd_mutex;
   std::mutex raw_scan_mutex;
+  std::mutex keep_alive_mutex;
 
   //transformations listening
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};

@@ -5,18 +5,18 @@ vector_field_controller_node:
     rate: 30.0
     input_repulsive_scan_topic: "scan" #the laserscan that will be used to consider repulsive points
     input_attractive_point_topic: "clicked_point" #attractive point
-    input_cmd_topic: "cmd_vel_teleop_joy" #other speed command to apply, prioritized to the point following
-    output_cmd_topic: "cmd_vel" #on which topic to publish the final speed commands
+    input_cmd_topic: "cmd_vel_teleop_assist" #other speed command to apply, prioritized to the point following
+    output_cmd_topic: "cmd_vel_nav" #on which topic to publish the final speed commands
     output_command_feedback_topic: "cmd_vel_vector" #publish a twistStamped message visualizable on RVIZ
     input_keep_alive_topic: "vector_field_controller_alive" #topic to keep the controller running or to stop it
-    keep_alive_timeout: 1.0 #if nothing is received on 'keep_alive_topic' then this delay define how much time to wait befor to stop the controller.
+    keep_alive_timeout: 1.0 #if nothing is received on 'keep_alive_topic' then this delay define how much time to wait before to stop the controller. (only for point following), this timeout value is also used for pausing the computation when nothing is received on 'input_cmd_topic'
 
     #vector field configuration 
     robot_frame: "base_link"
     map_frame: "map"
     control_type: "omni" #(only omni available for now) controller type 'diff' (differential) or 'omni' (omnidirectionnal)
     max_spd_norm: 1.0 #used for repulsive, attractive and final commands clamping, the output command will not have a norm higher than this value
-    zero_padding_radius: 0.01 #define minimal norm of speeds commands to be receive on 'input_cmd_topic' before to apply it.
+    zero_padding_radius: 0.01 #define minimal norm of speeds commands to be receive on 'input_cmd_topic' before to apply it. (allows to avoid sending too small values as command to the hardware)
 
     #linear attractivity
     min_spd_norm: 0.1 #used only to clamp minimal attractive command
@@ -30,7 +30,7 @@ vector_field_controller_node:
     kr_slope: 30.0 #modify the curve, how abrupt it is to lose effect
 
     #visual options
-    publish_field: false #reduce performances
+    publish_field: true #reduce performances
     output_field_topic: "vector_field" #on which topic to publish the vector field (marker array)
     field_grid_reso_x: 60 #how many points to show
     field_grid_reso_y: 60
@@ -44,4 +44,4 @@ vector_field_controller_node:
 
     #debuggging
     debug: true
-    debug_file_path: "/home/jrluser/Desktop/test_workspace/src/ros2-vector-field-controller/ros2_vector_field_controller/ros2_vector_field_controller_debug.txt"
+    debug_file_path: "/home/rexilius/workspace/ros2_vector_field_controller_debug.txt"
