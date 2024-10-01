@@ -161,7 +161,7 @@ private:
         debug_ss  << "Speed to follow (with collision avoidance) (robot's frame)(vx,vy,w): (" << wanted_speed_rob_frame.x<< " ; " << wanted_speed_rob_frame.y<<" ; " << wanted_speed_rob_frame.z<< ")" << std::endl;
         //publish commands
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK4");}
-        publish_cmd(wanted_speed_rob_frame.x,wanted_speed_rob_frame.y,0.0);
+        publish_cmd(wanted_speed_rob_frame.x,wanted_speed_rob_frame.y,wanted_speed_rob_frame.z);
         debug_ss  << "Speed command Published on topic: " << output_cmd_topic << std::endl;
         debug_ss  << "Speed command Visualisation Published on topic: " << output_command_feedback_topic << std::endl;
         if(flow_debug){RCLCPP_INFO(this->get_logger(), "OK5");}
@@ -238,14 +238,14 @@ private:
     for_robot_cmd: This function is also used to compute the arrows when showing the vector field, so we need to specify if this function is use for that or for generating the robot command.
     Some behavior depend on it. 
     */
+    bool point_following_mode = attractive_point_received && !cmd_msg_received; //cmd have priority over point following
 
     //Compute clamped repulsive command
     geometry_msgs::msg::Vector3 cl_rep_cmd;
-    compute_rep_cmd(cl_rep_cmd,pos_x,pos_y);
+    compute_rep_cmd(cl_rep_cmd,pos_x,pos_y,point_following_mode);
 
     //Compute clamped attractivity command
     geometry_msgs::msg::Vector3 cl_attr_cmd;
-    bool point_following_mode = attractive_point_received && !cmd_msg_received; //cmd have priority over point following
     compute_attr_cmd(cl_attr_cmd,pos_x,pos_y,point_following_mode);
     //Merge and clamp commands
     geometry_msgs::msg::Vector3 cmd;
@@ -255,7 +255,7 @@ private:
     double cmd_norm = sqrt(pow(cmd.x,2)+pow(cmd.y,2));
     double remap_ratio = 0.0;
     if (cmd_norm>0.0){
-      remap_ratio = clamp_not_zero(cmd_norm,0.0,max_spd_norm,0.0)/cmd_norm;
+      remap_ratio = clamp_not_zero(cmd_norm,0.0,choose_max_spd(point_following_mode),0.0)/cmd_norm;
     }
 
     geometry_msgs::msg::Vector3 cl_cmd;
@@ -352,7 +352,7 @@ private:
     if(!point_following_mode){ //If we have a speed command to follow (priority over point following)
       double cmd_norm = sqrt(pow(input_cmd.linear.x,2) + pow(input_cmd.linear.y,2));
       if(cmd_norm > zero_padding_radius){ //then we should apply the received CMD rather than doing the point following
-        double remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0)/cmd_norm;
+        double remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,choose_max_spd(point_following_mode),0.0)/cmd_norm;
         geometry_msgs::msg::Vector3 rob_frame_cmd;
         rob_frame_cmd.x = input_cmd.linear.x*remap_ratio;
         rob_frame_cmd.y = input_cmd.linear.y*remap_ratio;
@@ -366,7 +366,7 @@ private:
       else{
         cmd_result.x = 0.0;
         cmd_result.y = 0.0;
-        cmd_result.z = 0.0;
+        cmd_result.z = input_cmd.angular.z;
       }
     }
     else{ 
@@ -376,7 +376,7 @@ private:
       double remap_ratio = 0.0;
       double cmd_norm = sqrt(pow(cmd_d_x,2) + pow(cmd_d_y,2));
       if(cmd_norm > 0.0){ //otherwise remap ratio keep default value of 0.0
-          remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,max_spd_norm,0.0001)/cmd_norm;
+          remap_ratio = clamp_not_zero(cmd_norm,min_spd_norm,choose_max_spd(point_following_mode),0.0001)/cmd_norm;
       }
       cmd_result.x = cmd_d_x*remap_ratio;
       cmd_result.y = cmd_d_y*remap_ratio;
@@ -384,7 +384,7 @@ private:
     }
   }
 
-  void compute_rep_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y){
+  void compute_rep_cmd(geometry_msgs::msg::Vector3 &cmd_result,double x,double y,bool point_following_mode){
     double minus_grad_v_x = 0.0;
     double minus_grad_v_y = 0.0;
     for(int i=0; i<repulsive_points.size(); i++){
@@ -399,7 +399,7 @@ private:
     double cmd_norm = sqrt(pow(minus_grad_v_x,2) + pow(minus_grad_v_y,2));
     if(cmd_norm>0.0){
       //else it will keep default value of 0.0
-      remap_ratio = clamp_not_zero(cmd_norm,0.0,max_spd_norm,0.0)/cmd_norm;
+      remap_ratio = clamp_not_zero(cmd_norm,0.0,choose_max_spd(point_following_mode),0.0)/cmd_norm;
     }
     cmd_result.x = minus_grad_v_x*remap_ratio;
     cmd_result.y = minus_grad_v_y*remap_ratio;
@@ -418,6 +418,20 @@ private:
         new_val = 0.0;
     }
     return new_val;
+  }
+
+  double choose_max_spd(bool point_following_mode){
+    /*
+      In point following mode: We use the speeds limits defined by the user,
+      In assissted teleoperation, we have to use a limit corresponding to the received CMD, so the repulsivity will not have high values compared to the attractivity.
+      This function use the class variable: 'input_cmd' and 'max_spd_norm'
+    */
+    if(point_following_mode){
+      return max_spd_norm;
+    }
+    else{
+      return std::min(max_spd_norm,sqrt(pow(input_cmd.linear.x,2)+pow(input_cmd.linear.y,2)));
+    }
   }
 
   int update_tf(std::stringstream &debug_ss){
