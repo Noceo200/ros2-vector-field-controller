@@ -3,10 +3,14 @@
 This ROS2 package, vector field based, allows your robot to follow an attractive point while avoiding collision with repulsive points from a Laser-Scan. A speed command can also be send to override the point following. Allowing for an assissted teleoperation with collision avoidance.
 
 <div style="text-align: center;">
-<img src="materials/depth_to_scan_features.png" alt="image" style="max-height: 300px;">|
+<img src="materials/vector_field_param.png" alt="image" style="max-height: 300px;">|
 </div>
-
 <table align="center">
+  <tr>
+    <td align="center">
+      <a href="materials/doc.pdf">Check the Documentation</a>
+    </td>
+  </tr>
   <tr>
     <td align="center">
       <a href="materials/">More materials</a>
@@ -46,75 +50,88 @@ cd ..
 colcon build
 ```
 
-## API
+ ## API
 
 ### Subscribed topics
  | Topic  | Type | Description |
  |-----|----|----|
- | /cloud  | `sensor_msgs/PointCloud2` | The specified Point Cloud input from your sensor |
- | /odom  | `nav_msgs/Odometry` | The odometry of your robot is optionally used to compensate robot's motion and late data |
+ | /scan  | `sensor_msgs/LaserScan` | The laser scan that will be used to consider repulsive points |
+ | /attr_point  | `geometry_msgs/PointStamped` | The attractive point |
+ | /cmd_vel_assissted_teleop  | `geometry_msgs/Twist` | Other speed command to apply, prioritized to the point following |
+ | /vector_field_controller_alive  | `std_msgs/Bool` | Topic to keep the controller running or to stop it |
+  | /clock  | `rosgraph_msgs/Clock` | Topic to use a simulation time, if there is one |
  | **tf** | N/A | A valid transform from your configured frames |
 
 ### Published topics
  | Topic  | Type | Description |
  |-----|----|----|
- | /scan  | `sensor_msgs/LaserScan` | Output Laser-Scan |
+ | /cmd_vel  | `geometry_msgs/Twist` | The final speed commands |
+ | /cmd_vel_vector  | `geometry_msgs/TwistStamped` | A twistStamped message visualizable on RVIZ to check the commands sent |
+ | /vector_field  | `visualization_msgs/MarkerArray` | The vector field (marker array) |
 
 ## Configuration
 
 ### Node Settings
 
-`rate` - The frequency at which the node operates, in Hz. (Better if equal or inferior to the depth sensor publishing speed)
+`rate` - The frequency at which the node operates, in Hz.
 
-### Points Cloud Filtering Settings
+`input_repulsive_scan_topic` - The laser scan topic that will be used to consider repulsive points.
 
-`topic_in` - The topic name for the input point cloud.
+`input_attractive_point_topic` - The attractive point topic.
 
-`ref_frame` - The reference frame for the 3D position of points, should be a frame attached to the robot at the floor level and parallel to it. If you use a frame above the floor level like "base_link" usually, you can adjust the offset below with `height_offset`.
+`input_cmd_topic` - Other speed command topic to apply, priority over the point following.
 
-`height_offset` - The height offset from the floor, distance between the floor and `ref_frame`. (Following z axis in `ref_frame`, usually >0 as `ref_frame` above the floor)
+`output_cmd_topic` - The topic on which to publish the final speed commands.
 
-`min_height` - The minimum height of a point to be considered (represent height following z axis in `ref_frame`).
+`output_command_feedback_topic` - The topic on which to publish a twistStamped message visualizable on RVIZ.
 
-`max_height` - The maximum height for points (represent height following z axis in `ref_frame`).
+`input_keep_alive_topic` - The topic to keep the controller running or to stop it (only for the point following).
 
-`angle_min` - The minimum angle of points to keep in `ref_frame` (not in depth sensor frame) [-pi, pi].
+`keep_alive_timeout` - If nothing is received on 'keep_alive_topic' then this delay defines how much time to wait before stopping the controller. (only for point following), this timeout value is also used for pausing the computation when nothing is received on 'input_cmd_topic'.
 
-`angle_max` - The maximum angle of points to keep in `ref_frame` (not in depth sensor frame) [-pi, pi] and > `angle_min`.
+### Vector Field Configuration
 
-`range_min` - The minimum range of the scan in meters (radius from `ref_frame` center).
+`robot_frame` - The frame attached to the robot.
 
-`range_max` - The maximum range of the scan in meters (radius from `ref_frame` center, needs to be smaller than the maximum range of the depth camera, otherwise infinite points of the camera might be interpreted as obstacles).
+`map_frame` - The global frame.
 
-`speed_up_h` - An integer value that allows skipping horizontal lines of points and having a better rate, 1 = all the points, 2 = 1/2 of the points, etc.
+`control_type` - The controller type 'diff' (differential) or 'omni' (omnidirectional) (Only 'omni' available for now).
 
-`speed_up_v` - An integer value that allows skipping vertical lines of points and having a better rate, 1 = all the points, 2 = 1/2 of the points, etc.
+`max_spd_norm` - Used for repulsive, attractive and final commands clamping, the output command will not have a norm higher than this value.
 
-`compensate_move` - A boolean flag that, if true, compensates for temporary offsets on the points during movement if the computation time is not fast enough.
+`zero_padding_radius` - Define minimal norm of speeds commands to be received on 'input_cmd_topic' before to apply it. (allows to avoid sending too small values as command to the hardware).
 
-`odom_topic` - The topic name for odometry data, used if `compensate_move` is true to compute how `ref_frame` moved from `world_frame` during the computation, and apply a correction.
+### Linear Attractivity
 
-`publish_cloud` - A boolean flag to choose whether to publish the filtered points cloud or not. No need to publish it for the LaserScan, but can be used as debug to check which points are considered to compute the scan.
+`min_spd_norm` - Used only to clamp minimal attractive command.
 
-`topic_out_cloud` - The topic name for the output filtered point cloud.
+`min_goal_dist` - Minimal distance between attractive point and current position (if point following running) to consider the robot successful and stop it.
 
-### Scan Settings (based on filtered points above)
+`ka_force` - Proportionnal coefficient for attractivity.
 
-`publish_scan` - A boolean flag to choose whether to publish the LaserScan or not.
+### Exponential Repulsivity
 
-`topic_out_scan` - The topic name for the output LaserScan message, which will be published in the frame `ref_frame`.
+`kr_dist` - Repulsivity coefficient, specify the radius around the point before the effect starts to exponentially disappear, can be negative.
 
-`h_angle_increment` - The horizontal angle increment in radians for the scan message (e.g., 0.004363323 rad for 1-degree resolution). A smaller value allows for a scan message with more points (if the cloud allows it).
+`kr_height` - Linearly multiply the repulsive forces.
 
-`cliff_detect` - A boolean flag to detect and consider holes or cliffs in the floor as obstacles.
+`kr_slope` - Modify the curve, how abrupt it is to lose effect.
 
-`cliff_height` - The height of points that should be considered as holes and therefore as obstacles (usually <0).
+### Visual Options
 
-### Advanced Output Scan Settings
+`publish_field` - A boolean flag to choose whether to publish the vector field or not (reduces the performances).
 
-`time_increment` - The time increment in seconds. Let it be 0.0 if unknown.
+`output_field_topic` - The topic on which to publish the vector field (marker array).
 
-`scan_time` - The scan time in seconds. Let it be 0.0 if unknown.
+`field_grid_reso_x` - How many points to show on the x-axis.
+
+`field_grid_reso_y` - How many points to show on the y-axis.
+
+`field_grid_x_elong` - Size of vector field to print on the x-axis, around robot's pose.
+
+`field_grid_y_elong` - Size of vector field to print on the y-axis, around robot's pose.
+
+`arrows_size_multiplier` - The size multiplier for arrows in the vector field.
 
 ### Debugging
 
@@ -122,22 +139,25 @@ colcon build
 
 `debug_file_path` - The file path where debug information will be saved.
 
-`show_ranges` - A boolean flag to enable or disable the display of ranges of the output scan.
+## Launch the python simulation (Usually used for fast testing of vector fields)
+Specify your parameters directly into the python file.
+```
+python3 phyton_visualizer/ros2_vector_field_controller_simulation.py
+```
 
-
-## Launch
+## Launch ROS2 Node
 Two parameters can be specified when launching the package.
 
-`use_sim_time` - If True, the package will subscribed to `/clock` and use this time to publish the Laser-Scan and Point Cloud messages. Otherwise, the system's clock will be used.
+`use_sim_time` - If True, the package will subscribed to `/clock` and use this time to publish its messages. Otherwise, the system's clock will be used.
 
 `params_file` - YAML file tu consider for the configurations.
 
-To launch with the default configurations in "config/depth_filter_scan_converter_params.yaml":
+To launch with the default configurations in "config/vector_field_controller_config.yaml":
 ```
-ros2 launch depth-filter-scan-converter depth_filter_scan_converter.launch.py use_sim_time:=<true/false>
+ros2 launch ros2_vector_field_controller vector_field_controller.launch.py use_sim_time:=<true/false>
 ```
 
 To launch with your own configurations:
 ```
-ros2 launch depth-filter-scan-converter depth_filter_scan_converter.launch.py params_file:=<your_yaml_file_path> use_sim_time:=<true/false>
+ros2 launch ros2_vector_field_controller vector_field_controller.launch.py params_file:=<your_yaml_file_path> use_sim_time:=<true/false>
 ```

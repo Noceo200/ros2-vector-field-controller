@@ -36,11 +36,7 @@ vector_field_controller_node:
     field_grid_reso_y: 60
     field_grid_x_elong: 10.0 #size of vector field to print, around robot's pose
     field_grid_y_elong: 10.0
-
-    publish_path: true #TDM to add
-    output_path_topic: "vector_field_path" #TDM to add#marker array
-
-    arrows_size_multiplier: 0.1
+    arrows_size_multiplier: 0.1 #to adapt if arrows are too big or too small
 
     #debuggging
     debug: true
