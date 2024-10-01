@@ -152,7 +152,7 @@ Two parameters can be specified when launching the package.
 
 `params_file` - YAML file tu consider for the configurations.
 
-To launch with the default configurations in "config/vector_field_controller_config.yaml":
+To launch with the default configurations in "ros2_vector_field_controller/config/vector_field_controller_config.yaml":
 ```
 ros2 launch ros2_vector_field_controller vector_field_controller.launch.py use_sim_time:=<true/false>
 ```
